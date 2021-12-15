@@ -294,6 +294,21 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin):
         # Tie weights if needed
         self.tie_weights()
 
+
+    def post_init(self):
+        """
+        A method executed at the end of each Transformer model initialization, to execute code that needs the model's
+        modules properly initialized (such as weight initialization).
+        """
+        self.init_weights()
+        self._backward_compatibility_gradient_checkpointing()
+
+    def _backward_compatibility_gradient_checkpointing(self):
+        if self.supports_gradient_checkpointing and getattr(self.config, "gradient_checkpointing", False):
+            self.gradient_checkpointing_enable()
+            # Remove the attribute now that is has been consumed, so it's no saved in the config.
+            delattr(self.config, "gradient_checkpointing")
+
     def prune_heads(self, heads_to_prune):
         """ Prunes heads of the base model.
 
@@ -858,6 +873,7 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin):
         #print('breaking where we wanna')
         #import ipdb; ipdb.set_trace()
         return output
+
     def get_gpt3_logits(self, input_ids, tokenizer, non_gpt3_logp=-50000.00, api_key=None):
 
         import openai
@@ -892,6 +908,7 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin):
                 full_vocab_p[0,index_] = y
 
         return full_vocab_p
+
     def _generate_no_beam_search(
         self,
         input_ids,
@@ -935,7 +952,6 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin):
             cond_len = input_ids.shape[1]
 
         if not(gedi_model is None):
-
 
             if attr_class == 0:
                 pt_id = tokenizer.encode(code_0)[0]
@@ -1117,8 +1133,6 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin):
                                 rescale=False
 
 
-
-
                             next_token_logits[i, previous_token] /= repetition_penalty
                             #original version accidentally put rescaling inside forloop over prevs, this is slow and only changes things is max logit is penalized
                             #conditonal replicates paper results but is faster
@@ -1137,9 +1151,6 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin):
                                 next_token_logits[i, previous_token] *= repetition_penalty
                             else:
                                 next_token_logits[i, previous_token] /= repetition_penalty
-
-
-
 
 
             if no_repeat_ngram_size > 0:

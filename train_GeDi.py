@@ -25,6 +25,10 @@ import logging
 import os
 import random
 
+from scipy import special
+
+# os.environ["CUDA_VISIBLE_DEVICES"] = "0,2"
+
 import numpy as np
 import torch
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler, TensorDataset
@@ -34,6 +38,8 @@ import sys
 
 
 from modeling_gpt2 import GPT2LMHeadModel
+# from transformers import GPT2LMHeadModel
+
 
 from transformers import (
     WEIGHTS_NAME,
@@ -93,23 +99,23 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-ALL_MODELS = sum(
-    (
-        tuple(conf.pretrained_config_archive_map.keys())
-        for conf in (
-            BertConfig,
-            XLNetConfig,
-            XLMConfig,
-            RobertaConfig,
-            DistilBertConfig,
-            AlbertConfig,
-            XLMRobertaConfig,
-            FlaubertConfig,
-            GPT2Config
-        )
-    ),
-    (),
-)
+# ALL_MODELS = sum(
+#     (
+#         tuple(conf.pretrained_config_archive_map.keys())
+#         for conf in (
+#             BertConfig,
+#             XLNetConfig,
+#             XLMConfig,
+#             RobertaConfig,
+#             DistilBertConfig,
+#             AlbertConfig,
+#             XLMRobertaConfig,
+#             FlaubertConfig,
+#             GPT2Config
+#         )
+#     ),
+#     (),
+# )
 
 MODEL_CLASSES = {
     "bert": (BertConfig, BertForSequenceClassification, BertTokenizer),
@@ -141,12 +147,14 @@ def add_sep(batch, sep_id):
                    zip(left_chunk, mid_chunk, right_chunk)]
     return torch.stack(tensor_list)[:,:-1]
 
-def set_seed(args):
-    random.seed(args.seed)
-    np.random.seed(args.seed)
-    torch.manual_seed(args.seed)
-    if args.n_gpu > 0:
-        torch.cuda.manual_seed_all(args.seed)
+# def set_seed(args):
+#     random.seed(args.seed)
+#     np.random.seed(args.seed)
+#     torch.manual_seed(args.seed)
+#     if args.n_gpu > 0:
+#         torch.cuda.manual_seed_all(args.seed)
+
+from transformers import set_seed
 
 
 def train(args, train_dataset, model, tokenizer):
@@ -240,7 +248,8 @@ def train(args, train_dataset, model, tokenizer):
     train_iterator = trange(
         epochs_trained, int(args.num_train_epochs), desc="Epoch", disable=args.local_rank not in [-1, 0],
     )
-    set_seed(args)  # Added here for reproductibility
+    # print(args.seed)
+    set_seed(args.seed)  # Added here for reproductibility
 
 
 
@@ -255,13 +264,13 @@ def train(args, train_dataset, model, tokenizer):
     for epoch_ in train_iterator:
 
         epoch_iterator = train_dataloader
-        for step, batch in enumerate(epoch_iterator):
+        for step, batch in tqdm(enumerate(epoch_iterator)):
 
             if args.sst5:
                 split_lookup = {0:0, 1:1, 2:2, 3:3, 4:3, 5:3} #epoch:threshold_to_split
                 threshold = split_lookup[epoch_]
-                new_labels = ( batch[3] > threshold ).type_as(batch[3])
-                batch[3] = new_labels
+                new_labels = ( batch[2] > threshold ).type_as(batch[2])
+                batch[2] = new_labels
 
 
             # Skip past any already trained steps if resuming training
@@ -295,10 +304,15 @@ def train(args, train_dataset, model, tokenizer):
 
             else:
                 assert args.model_type == 'gpt2' #let's not support other models for now
-                inputs = {"input_ids": batch[0], "attention_mask": batch[1], "labels": batch[3]}
+                inputs = {"input_ids": batch[0], "attention_mask": batch[1], "labels": batch[2]}
+
+            # print(seq_batched.size())
 
             outputs = model(**inputs) #modeling_gpt2.py modified to have none reduction
-            losses = outputs[0].view(seq_batched.shape[0], -1)
+            # print(outputs[0]) # 0: loss, 1: logits, 2: hidden_states
+            # losses = outputs[0].view(seq_batched.shape[0], -1)
+            # print(outputs[0].size())  # [1528]
+            losses = outputs[0].view(seq_batched.shape[0], -1)  # (8, 192)
             #loss mask includes first padded token
             if args.mask_eos_token:
                 loss_mask = batch[1][:,:-1].to(torch.float16).cuda()
@@ -326,17 +340,17 @@ def train(args, train_dataset, model, tokenizer):
 
                 #weights all batches equally even if sum of seqlens vary accross training iterations
                 if False:
-                    onehot_a = (batch[3]==0).to(torch.float16)
-                    onehot_a = (batch[3]==0).to(torch.float16)
-                    gen_loss_a = (batch[3]==0).to(torch.float16).unsqueeze(1)*loss_a/loss_lengths
-                    gen_loss_b = (batch[3]==1).to(torch.float16).unsqueeze(1)*loss_b/loss_lengths
-                    gen_loss_c = (batch[3]==2).to(torch.float16).unsqueeze(1)*loss_c/loss_lengths
+                    onehot_a = (batch[2]==0).to(torch.float16)
+                    onehot_a = (batch[2]==0).to(torch.float16)
+                    gen_loss_a = (batch[2]==0).to(torch.float16).unsqueeze(1)*loss_a/loss_lengths
+                    gen_loss_b = (batch[2]==1).to(torch.float16).unsqueeze(1)*loss_b/loss_lengths
+                    gen_loss_c = (batch[2]==2).to(torch.float16).unsqueeze(1)*loss_c/loss_lengths
                 else:
-                    onehot_a = (batch[3]==0).to(torch.float32)
-                    onehot_a = (batch[3]==0).to(torch.float32)
-                    gen_loss_a = (batch[3]==0).to(torch.float32).unsqueeze(1)*loss_a/loss_lengths
-                    gen_loss_b = (batch[3]==1).to(torch.float32).unsqueeze(1)*loss_b/loss_lengths
-                    gen_loss_c = (batch[3]==2).to(torch.float32).unsqueeze(1)*loss_c/loss_lengths
+                    onehot_a = (batch[2]==0).to(torch.float32)
+                    onehot_a = (batch[2]==0).to(torch.float32)
+                    gen_loss_a = (batch[2]==0).to(torch.float32).unsqueeze(1)*loss_a/loss_lengths
+                    gen_loss_b = (batch[2]==1).to(torch.float32).unsqueeze(1)*loss_b/loss_lengths
+                    gen_loss_c = (batch[2]==2).to(torch.float32).unsqueeze(1)*loss_c/loss_lengths
 
                 gen_loss = torch.sum(gen_loss_a+gen_loss_b+gen_loss_c)/bsz
                 if args.sum_loss:
@@ -350,16 +364,19 @@ def train(args, train_dataset, model, tokenizer):
                     loss_c= (loss_c/loss_lengths).sum(dim=1)
 
             else:
+                # print(losses, losses.size())
+                # losses (bsz, seq_len)
+                # print(loss_mask, loss_mask.size())
                 loss_a,loss_b=torch.split(losses, bsz, dim=0)
 
-                loss_a*=loss_mask
-                loss_b*=loss_mask
+                loss_a = loss_a.mul(loss_mask)
+                loss_b = loss_b.mul(loss_mask)
                 if False:
-                    gen_loss_a = (batch[3]==0).to(torch.float16).unsqueeze(1)*loss_a/loss_lengths
-                    gen_loss_b = (batch[3]==1).to(torch.float16).unsqueeze(1)*loss_b/loss_lengths
+                    gen_loss_a = (batch[2]==0).to(torch.float16).unsqueeze(1)*loss_a/loss_lengths
+                    gen_loss_b = (batch[2]==1).to(torch.float16).unsqueeze(1)*loss_b/loss_lengths
                 else:
-                    gen_loss_a = (batch[3]==0).to(torch.float32).unsqueeze(1)*loss_a/loss_lengths
-                    gen_loss_b = (batch[3]==1).to(torch.float32).unsqueeze(1)*loss_b/loss_lengths
+                    gen_loss_a = (batch[2]==0).to(torch.float32).unsqueeze(1)*loss_a/loss_lengths
+                    gen_loss_b = (batch[2]==1).to(torch.float32).unsqueeze(1)*loss_b/loss_lengths
 
                 if args.jigsaw and args.jigsaw_no_toxic_gen:
                     gen_loss = torch.sum(gen_loss_a+gen_loss_b)/bsz
@@ -379,8 +396,8 @@ def train(args, train_dataset, model, tokenizer):
                 class_logits = torch.stack((-loss_a, -loss_b, -loss_c), dim=1)
             else:
                 class_logits = torch.stack((-loss_a, -loss_b), dim=1) #(bsz, 2) dimensional
-                batch[3][batch[3] == 2] = 1  #turning 3-ary to binary
-            class_labels = batch[3]
+                batch[2][batch[2] == 2] = 1  #turning 3-ary to binary
+            class_labels = batch[2]
 
             if args.logit_scale:
                 if args.fp16:
@@ -449,10 +466,12 @@ def train(args, train_dataset, model, tokenizer):
                             logs[eval_key] = value
 
                     loss_scalar = (tr_loss - logging_loss) / args.logging_steps
-                    learning_rate_scalar = scheduler.get_lr()[0]
+                    learning_rate_scalar = scheduler.get_last_lr()[0] #scheduler.get_lr()[0] 
                     logs["learning_rate"] = learning_rate_scalar
                     logs["loss"] = loss_scalar
                     logging_loss = tr_loss
+
+                    print(logs)
 
                     for key, value in logs.items():
                         tb_writer.add_scalar(key, value, global_step)
@@ -554,6 +573,9 @@ def evaluate(args, model, tokenizer, prefix=""):
                 else:
                     seq_batched = torch.cat((seq_a,seq_b),dim=0)
 
+                # print(seq_batched)
+                # print(seq_batched.size())
+
                 #want to compute LM loss here so feeding inputs as labels
                 inputs = {"input_ids": seq_batched, "attention_mask": None, "labels": seq_batched}
 
@@ -565,6 +587,8 @@ def evaluate(args, model, tokenizer, prefix=""):
                     loss_mask = batch[1][:,:-1].to(torch.float16).cuda()
                 else:
                     loss_mask = batch[1][:,:-1].to(torch.float32).cuda()
+                    # print(loss_mask)
+                    # print(loss_mask.shape)
                     #appending with ones to account for the control code token being added
                     left_ = torch.ones(loss_mask.shape[0],1).type_as(loss_mask)
                     loss_mask = torch.cat((left_, loss_mask[:,:-1]), dim=1)
@@ -581,13 +605,13 @@ def evaluate(args, model, tokenizer, prefix=""):
 
                     #weights all batches equally even if sum of seqlens vary accross training iterations
                     if False:
-                        gen_loss_a = (batch[3]==0).to(torch.float16).unsqueeze(1)*loss_a/loss_lengths
-                        gen_loss_b = (batch[3]==1).to(torch.float16).unsqueeze(1)*loss_b/loss_lengths
-                        gen_loss_c = (batch[3]==2).to(torch.float16).unsqueeze(1)*loss_c/loss_lengths
+                        gen_loss_a = (batch[2]==0).to(torch.float16).unsqueeze(1)*loss_a/loss_lengths
+                        gen_loss_b = (batch[2]==1).to(torch.float16).unsqueeze(1)*loss_b/loss_lengths
+                        gen_loss_c = (batch[2]==2).to(torch.float16).unsqueeze(1)*loss_c/loss_lengths
                     else:
-                        gen_loss_a = (batch[3]==0).to(torch.float32).unsqueeze(1)*loss_a/loss_lengths
-                        gen_loss_b = (batch[3]==1).to(torch.float32).unsqueeze(1)*loss_b/loss_lengths
-                        gen_loss_c = (batch[3]==2).to(torch.float32).unsqueeze(1)*loss_c/loss_lengths
+                        gen_loss_a = (batch[2]==0).to(torch.float32).unsqueeze(1)*loss_a/loss_lengths
+                        gen_loss_b = (batch[2]==1).to(torch.float32).unsqueeze(1)*loss_b/loss_lengths
+                        gen_loss_c = (batch[2]==2).to(torch.float32).unsqueeze(1)*loss_c/loss_lengths
                     gen_loss = torch.sum(gen_loss_a+gen_loss_b+gen_loss_c)/bsz
                     if args.sum_loss:
                         loss_a = loss_a.sum(dim=1)
@@ -607,11 +631,11 @@ def evaluate(args, model, tokenizer, prefix=""):
 
                     #weights all batches equally even if sum of seqlens vary accross training iterations
                     if False:
-                        gen_loss_a = (batch[3]==0).to(torch.float16).unsqueeze(1)*loss_a/loss_lengths
-                        gen_loss_b = (batch[3]==1).to(torch.float16).unsqueeze(1)*loss_b/loss_lengths
+                        gen_loss_a = (batch[2]==0).to(torch.float16).unsqueeze(1)*loss_a/loss_lengths
+                        gen_loss_b = (batch[2]==1).to(torch.float16).unsqueeze(1)*loss_b/loss_lengths
                     else:
-                        gen_loss_a = (batch[3]==0).to(torch.float32).unsqueeze(1)*loss_a/loss_lengths
-                        gen_loss_b = (batch[3]==1).to(torch.float32).unsqueeze(1)*loss_b/loss_lengths
+                        gen_loss_a = (batch[2]==0).to(torch.float32).unsqueeze(1)*loss_a/loss_lengths
+                        gen_loss_b = (batch[2]==1).to(torch.float32).unsqueeze(1)*loss_b/loss_lengths
 
                     gen_loss = torch.sum(gen_loss_a+gen_loss_b)/bsz
 
@@ -627,13 +651,13 @@ def evaluate(args, model, tokenizer, prefix=""):
                     class_logits = torch.stack((-loss_a, -loss_b, -loss_c), dim=1)
                 else:
                     class_logits = torch.stack((-loss_a, -loss_b), dim=1) #(bsz, 2) dimensional
-                    batch[3][batch[3] == 2] = 1  #turning 3-ary to binary
+                    batch[2][batch[2] == 2] = 1  #turning 3-ary to binary
 
 
 
 
 
-                class_labels = batch[3]
+                class_labels = batch[2]
 
 
                 loss_fn = torch.nn.CrossEntropyLoss()
@@ -738,7 +762,7 @@ def load_and_cache_examples(args, task, tokenizer, evaluate=False):
         )
 
         if args.model_type == 'gpt2': #setting pad token for GPT-2
-            tokenizer.pad_token = '[PAD]'
+            tokenizer.pad_token = tokenizer.eos_token
 
         if args.sst5:
             label_list = ['0','1','2','3','4']
@@ -749,9 +773,9 @@ def load_and_cache_examples(args, task, tokenizer, evaluate=False):
             label_list=label_list,
             max_length=args.max_seq_length,
             output_mode=output_mode,
-            pad_on_left=bool(args.model_type in ["xlnet"]),  # pad on the left for xlnet
-            pad_token=tokenizer.convert_tokens_to_ids([tokenizer.pad_token])[0],
-            pad_token_segment_id=4 if args.model_type in ["xlnet"] else 0,
+            # pad_on_left=bool(args.model_type in ["xlnet"]),  # pad on the left for xlnet
+            # pad_token=tokenizer.convert_tokens_to_ids([tokenizer.pad_token])[0],
+            # pad_token_segment_id=4 if args.model_type in ["xlnet"] else 0,
         )
         if args.local_rank in [-1, 0]:
             logger.info("Saving features into cached file %s", cached_features_file)
@@ -763,13 +787,13 @@ def load_and_cache_examples(args, task, tokenizer, evaluate=False):
     # Convert to Tensors and build dataset
     all_input_ids = torch.tensor([f.input_ids for f in features], dtype=torch.long)
     all_attention_mask = torch.tensor([f.attention_mask for f in features], dtype=torch.long)
-    all_token_type_ids = torch.tensor([f.token_type_ids for f in features], dtype=torch.long)
+    # all_token_type_ids = torch.tensor([f.token_type_ids for f in features], dtype=torch.long)
     if output_mode == "classification":
         all_labels = torch.tensor([f.label for f in features], dtype=torch.long)
     elif output_mode == "regression":
         all_labels = torch.tensor([f.label for f in features], dtype=torch.float)
 
-    dataset = TensorDataset(all_input_ids, all_attention_mask, all_token_type_ids, all_labels)
+    dataset = TensorDataset(all_input_ids, all_attention_mask, all_labels)
     return dataset
 
 
@@ -796,7 +820,7 @@ def main():
         default=None,
         type=str,
         required=True,
-        help="Path to pre-trained model or shortcut name selected in the list: " + ", ".join(ALL_MODELS),
+        # help="Path to pre-trained model or shortcut name selected in the list: " + ", ".join(ALL_MODELS),
     )
     parser.add_argument(
         "--task_name",
@@ -978,7 +1002,7 @@ def main():
     )
 
     # Set seed
-    set_seed(args)
+    set_seed(args.seed)
 
 
     # Prepare GLUE task
@@ -1023,6 +1047,11 @@ def main():
         do_lower_case=args.do_lower_case,
         cache_dir=args.cache_dir if args.cache_dir else None,
     )
+
+    # if args.model_type == 'gpt2':
+    #     special_tokens_dict = {'pad_token': '[PAD]'}
+    #     tokenizer.add_special_tokens(special_tokens_dict)
+
     if args.add_sep:
         special_tokens_dict = {'sep_token': '<SEP>'}
         tokenizer.add_special_tokens(special_tokens_dict)
@@ -1033,6 +1062,10 @@ def main():
         config=config,
         cache_dir=args.cache_dir if args.cache_dir else None,
     )
+    # from modeling_mygpt2 import GPT2LMHeadModelWithNoReduction
+    # model = GPT2LMHeadModelWithNoReduction(config=config, args=args)
+
+
     model.resize_token_embeddings(len(tokenizer))
 
     if args.local_rank == 0:
@@ -1072,6 +1105,8 @@ def main():
 
         # Load a trained model and vocabulary that you have fine-tuned
         model = model_class.from_pretrained(args.output_dir)
+        # from modeling_mygpt2 import GPT2LMHeadModelWithNoReduction
+        # model = GPT2LMHeadModelWithNoReduction.from_pretrained(args.output_dir)
         tokenizer = tokenizer_class.from_pretrained(args.output_dir)
         model.to(args.device)
 
@@ -1095,6 +1130,8 @@ def main():
             result = evaluate(args, model, tokenizer, prefix=prefix)
             result = dict((k + "_{}".format(global_step), v) for k, v in result.items())
             results.update(result)
+
+    print(results)
 
     return results
 

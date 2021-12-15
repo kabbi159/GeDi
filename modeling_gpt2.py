@@ -9,8 +9,8 @@ import torch
 import torch.nn as nn
 from torch.nn import CrossEntropyLoss
 
-from transformers.configuration_gpt2 import GPT2Config
-from transformers.file_utils import add_start_docstrings, add_start_docstrings_to_callable
+from transformers import GPT2Config
+from transformers.file_utils import add_start_docstrings, add_start_docstrings_to_model_forward
 # from transformers.modeling_utils import Conv1D, PreTrainedModel, SequenceSummary, prune_conv1d_layer
 from modeling_utils import Conv1D, PreTrainedModel, SequenceSummary, prune_conv1d_layer
 
@@ -333,7 +333,8 @@ class GPT2Model(GPT2PreTrainedModel):
         super().__init__(config)
         self.output_hidden_states = config.output_hidden_states
         self.output_attentions = config.output_attentions
-        self.output_past = config.output_past
+        # self.output_past = config.output_past
+        self.output_past = config.use_cache
 
         self.wte = nn.Embedding(config.vocab_size, config.n_embd)
         self.wpe = nn.Embedding(config.n_positions, config.n_embd)
@@ -358,7 +359,7 @@ class GPT2Model(GPT2PreTrainedModel):
         for layer, heads in heads_to_prune.items():
             self.h[layer].attn.prune_heads(heads)
 
-    @add_start_docstrings_to_callable(GPT2_INPUTS_DOCSTRING)
+    @add_start_docstrings_to_model_forward(GPT2_INPUTS_DOCSTRING)
     def forward(
         self,
         input_ids=None,
@@ -594,7 +595,7 @@ class GPT2LMHeadModel(GPT2PreTrainedModel):
         inputs.update(kwargs)
         return inputs
 
-    @add_start_docstrings_to_callable(GPT2_INPUTS_DOCSTRING)
+    @add_start_docstrings_to_model_forward(GPT2_INPUTS_DOCSTRING)
     def forward(
         self,
         input_ids=None,
@@ -704,7 +705,7 @@ class GPT2DoubleHeadsModel(GPT2PreTrainedModel):
     def get_output_embeddings(self):
         return self.lm_head
 
-    @add_start_docstrings_to_callable(GPT2_INPUTS_DOCSTRING)
+    @add_start_docstrings_to_model_forward(GPT2_INPUTS_DOCSTRING)
     def forward(
         self,
         input_ids=None,
